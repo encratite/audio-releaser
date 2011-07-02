@@ -33,9 +33,23 @@ class AudioReleaser
     return mp3Filename
   end
 
-  def encodeMP3(track)
-    mp3Filename = getMP3Filename(track)
-    outputPath = Nil.joinPaths(@outputDirectory, mp3Filename)
+  def getFLACFilename(track)
+    return "#{getTrackNumberString(track)} - #{track.artist} - #{track.title}.flac"
+  end
+
+  def encodeWAV(track, mode)
+    case mode
+    when :mp3
+      mp3Filename = getMP3Filename(track)
+      outputPath = Nil.joinPaths(@mp3OutputDirectory, mp3Filename)
+      commandLine = @configuration::MP3EncoderCommandLine
+      performHashing = true
+    when :flac
+      flacFilename = getFLACFilename(track)
+      outputPath = Nil.joinPaths(@flacOutputDirectory, flacFilename)
+      commandLine = @configuration::FLACEncoderCommandLine
+      performHashing = false
+    end
     replacementMap = {
       'input' => track.wavPath,
       'output' => outputPath,
@@ -47,17 +61,17 @@ class AudioReleaser
       'trackNumber' => track.trackNumber.to_s,
       'genre' => @release.genre,
     }
-    commandLine = @configuration::EncoderCommandLine.dup
+    commandLine
     replacementMap.each do |target, replacement|
       actualTarget = "$#{target}$"
-      commandLine.gsub!(actualTarget, replacement)
+      commandLine = commandLine.gsub(actualTarget, replacement)
     end
-    #Nil.threadPrint "Executing #{commandLine.inspect}"
-    Nil.threadPrint "Processing #{track.wavPath}"
     `#{commandLine}`
-    hash = getCRC32(outputPath)
-    @mutex.synchronize do
-      @hashes[mp3Filename] = hash
+    if performHashing
+      hash = getCRC32(outputPath)
+      @mutex.synchronize do
+        @hashes[mp3Filename] = hash
+      end
     end
   end
 
@@ -70,26 +84,32 @@ class AudioReleaser
         end
         track = @jobs.shift
       end
-      encodeMP3(track)
+      Nil.threadPrint "Processing #{track.wavPath}"
+      encodeWAV(track, :mp3)
+      encodeWAV(track, :flac)
     end
   end
 
   def getZeroBasePath(extension)
     fileName = "00-#{@baseReleaseString.downcase}.#{extension}"
-    return Nil.joinPaths(@outputDirectory, fileName)
+    return Nil.joinPaths(@mp3OutputDirectory, fileName)
   end
 
   def processRelease(release)
     beginning = Time.now
     @release = release
+    flacDirectory = "#{release.artist} - #{release.title} (#{release.year})"
+    @flacOutputDirectory = Nil.joinPaths(@configuration::FLACReleaseDirectory, flacDirectory)
     @baseReleaseString = scenifyString("#{release.artist}-#{release.title}-#{release.year}-#{@configuration::GroupInitials}")
-    @outputDirectory = Nil.joinPaths(@configuration::ReleaseDirectory, @baseReleaseString)
-    puts "Creating #{@outputDirectory}" if !File.exists?(@outputDirectory)
-    FileUtils.mkdir_p(@outputDirectory)
+    @mp3OutputDirectory = Nil.joinPaths(@configuration::MP3ReleaseDirectory, @baseReleaseString)
+    [@flacOutputDirectory, @mp3OutputDirectory].each do |directory|
+      puts "Creating #{directory}" if !File.exists?(directory)
+      FileUtils.mkdir_p(directory)
+    end
     copyCover
     createJobs
     createM3U
-    createMP3s
+    encodeWAVFiles
     createSFV
     createNFO
     duration = Time.now - beginning
@@ -109,7 +129,7 @@ class AudioReleaser
     end
   end
 
-  def createMP3s
+  def encodeWAVFiles
     threads = []
     @hashes = {}
     @configuration::WorkerCount.times do
@@ -154,7 +174,7 @@ class AudioReleaser
       track = track.dup
       track.trackNumber = trackNumber
       mp3Filename = getMP3Filename(track)
-      mp3Path = Nil.joinPaths(@outputDirectory, mp3Filename)
+      mp3Path = Nil.joinPaths(@mp3OutputDirectory, mp3Filename)
       duration = getMP3Duration(mp3Path)
       totalTime += duration
       trackNumberString = sprintf('%02d', trackNumber)
@@ -184,7 +204,7 @@ class AudioReleaser
       'label' => @release.label,
       'retail date' => getDateString(@release.retailDate),
       'release date' => getDateString(@release.releaseDate),
-      'encoder' => @configuration::EncoderName,
+      'encoder' => @configuration::MP3EncoderName,
       'notes' => @release.notes,
       'tracks' => trackData,
     }
