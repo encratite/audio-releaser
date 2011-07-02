@@ -8,6 +8,15 @@ class LineInformation
     @firstIndex = firstIndex
     @lastIndex = lastIndex
   end
+
+  def getSpace
+    return @lastIndex - @firstIndex + 1
+  end
+
+  def replace(lines, replacement)
+    currentLine = lines[@lineIndex]
+    currentLine[@firstIndex..@lastIndex] = replacement
+  end
 end
 
 class NFOTemplate
@@ -58,6 +67,13 @@ class NFOTemplate
     end
   end
 
+  def clearField(lineInformationArray, modifiedLines)
+    lineInformationArray.each do |lineInformation|
+      currentLine = modifiedLines[lineInformation.lineIndex]
+      currentLine[lineInformation.firstIndex..lineInformation.lastIndex] = ' ' * (lineInformation.lastIndex - lineInformation.firstIndex + 1)
+    end
+  end
+
   def writeNFO(outputPath, fieldValues)
     modifiedLines = @lines.dup
     @fields.each do |name, lineInformationArray|
@@ -65,17 +81,56 @@ class NFOTemplate
       if value == nil
         raise "Unable to find a value for the NFO field #{name.inspect}"
       end
+      clearField(lineInformationArray, modifiedLines)
       if name == 'tracks'
         #requires different handling due to white-space preservation and the table format
+        trackUnits, totalTimeString = value
+        if trackUnits.size + 2 > lineInformationArray.size
+          raise "There are too many tracks (#{trackUnits.size}) to fit into the NFO"
+        end
+        offset = 0
+        trackUnits.each do |trackNumberString, trackTitle, trackDurationString|
+          lineInformation = lineInformationArray[offset]
+          availableSpace = lineInformation.getSpace
+          availableTitleSpace = availableSpace - trackNumberString.size - trackDurationString.size - 2
+          shortenedStringSuffix = '...'
+          if trackTitle.size > availableTitleSpace
+            puts "Had to shorten title #{trackTitle.inspect}, check NFO"
+            trackTitle = trackTitle[0..availableTitleSpace - shortenedStringSuffix.size - 1] + shortenedStringSuffix
+            if trackTitle.size != availableTitleSpace
+              raise "Title space calculation for #{trackTitle.inspect} is broken"
+            end
+          end
+          left = trackNumberString + ' '
+          right = ' ' + trackDurationString
+          while left.size + trackTitle.size + right.size < availableSpace
+            trackTitle += ' '
+          end
+          finalString = left + trackTitle + right
+          if finalString.size > availableSpace
+            raise "Unable to fit string for track #{trackTitle.inspect} into the NFO"
+          end
+          lineInformation.replace(modifiedLines, finalString)
+          offset += 1
+        end
+        offset += 1
+        lineInformation = lineInformationArray[offset]
+        totalTimeString = 'Total: ' + totalTimeString
+        while totalTimeString.size < lineInformation.getSpace
+          totalTimeString = ' ' + totalTimeString
+        end
+        if totalTimeString.size > lineInformation.getSpace
+          raise "Unable to find space for the total time string #{totalTimeString.inspect}"
+        end
+        lineInformation.replace(modifiedLines, totalTimeString)
       else
         words = value.split(' ')
         lineInformationArray.each do |lineInformation|
           currentIndex = lineInformation.firstIndex
           currentLine = modifiedLines[lineInformation.lineIndex]
-          currentLine[lineInformation.firstIndex..lineInformation.lastIndex] = ' ' * (lineInformation.lastIndex - lineInformation.firstIndex + 1)
           first = true
           while !words.empty?
-            remainingSpace = lineInformation.lastIndex - currentIndex
+            remainingSpace = lineInformation.lastIndex - currentIndex + 1
             currentWord = words.first
             if currentWord.size > remainingSpace
               break

@@ -1,4 +1,5 @@
 require 'mp3info'
+require 'zlib'
 require 'thread'
 require 'fileutils'
 
@@ -54,6 +55,10 @@ class AudioReleaser
     #Nil.threadPrint "Executing #{commandLine.inspect}"
     Nil.threadPrint "Processing #{track.wavPath}"
     `#{commandLine}`
+    hash = getCRC32(outputPath)
+    @mutex.synchronize do
+      @hashes[mp3Filename] = hash
+    end
   end
 
   def encoderThread
@@ -79,12 +84,13 @@ class AudioReleaser
     @release = release
     @baseReleaseString = scenifyString("#{release.artist}-#{release.title}-#{release.year}-#{@configuration::GroupInitials}")
     @outputDirectory = Nil.joinPaths(@configuration::ReleaseDirectory, @baseReleaseString)
-    puts "Creating #{@outputDirectory}"
+    puts "Creating #{@outputDirectory}" if !File.exists?(@outputDirectory)
     FileUtils.mkdir_p(@outputDirectory)
     copyCover
     createJobs
     createM3U
-    #createMP3s
+    createMP3s
+    createSFV
     createNFO
     duration = Time.now - beginning
     printf("Duration: %.2f s\n", duration)
@@ -97,15 +103,15 @@ class AudioReleaser
       if !File.exists?(track.wavPath)
         raise "Unable to find WAV: #{track.wavPath}"
       end
-      newTrack = track.dup
-      newTrack.trackNumber = trackNumber
-      @jobs << newTrack
+      track.trackNumber = trackNumber
+      @jobs << track
       trackNumber += 1
     end
   end
 
   def createMP3s
     threads = []
+    @hashes = {}
     @configuration::WorkerCount.times do
       thread = Thread.new do
         encoderThread
@@ -140,11 +146,37 @@ class AudioReleaser
     return sprintf('%d-%02d-%02d', date.year, date.month, date.day)
   end
 
+  def getTrackData
+    trackUnits = []
+    trackNumber = 1
+    totalTime = 0
+    @release.tracks.each do |track|
+      track = track.dup
+      track.trackNumber = trackNumber
+      mp3Filename = getMP3Filename(track)
+      mp3Path = Nil.joinPaths(@outputDirectory, mp3Filename)
+      duration = getMP3Duration(mp3Path)
+      totalTime += duration
+      trackNumberString = sprintf('%02d', trackNumber)
+      trackUnits << [trackNumberString, track.title, getDurationString(duration)]
+      trackNumber += 1
+    end
+    totalTimeString = getDurationString(totalTime)
+    return trackUnits, totalTimeString
+  end
+
+  def getDurationString(duration)
+    secondsPerMinute = 60
+    minutes = duration / secondsPerMinute
+    seconds = duration % secondsPerMinute
+    durationString = sprintf('%02d:%02d', minutes, seconds)
+    return durationString
+  end
+
   def createNFO
     template = NFOTemplate.new(@configuration::NFOTemplatePath)
     nfoOutputPath = getZeroBasePath('nfo')
-    trackString = ''
-    totalTimeString = ''
+    trackData = getTrackData
     fields = {
       'artist' => @release.artist,
       'release' => @release.title,
@@ -154,9 +186,27 @@ class AudioReleaser
       'release date' => getDateString(@release.releaseDate),
       'encoder' => @configuration::EncoderName,
       'notes' => @release.notes,
-      'tracks' => trackString,
-      'total time' => totalTimeString,
+      'tracks' => trackData,
     }
     template.writeNFO(nfoOutputPath, fields)
+  end
+
+  def getCRC32(path)
+    contents = Nil.readFile(path)
+    hashString = '%08x' % Zlib.crc32(contents)
+  end
+
+  def createSFV
+    output = ";#{@baseReleaseString}\r\n"
+    @release.tracks.each do |track|
+      fileName = getMP3Filename(track)
+      hash = @hashes[fileName]
+      if hash == nil
+        raise "Unable to retrieve the CRC32 hash for #{fileName}"
+      end
+      output += "#{fileName} #{hash}\r\n"
+    end
+    sfvPath = getZeroBasePath('sfv')
+    Nil.writeFile(sfvPath, output)
   end
 end
