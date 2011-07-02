@@ -12,6 +12,7 @@ class Release
     :releaseDate,
     :notes,
     :tracks,
+    :coverPath,
   ]
 
   attr_reader *Members

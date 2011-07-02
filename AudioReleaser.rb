@@ -21,10 +21,18 @@ class AudioReleaser
     return output
   end
 
-  def encodeMP3(track)
-    #puts track.inspect
-    trackNumberString = sprintf('%02d', track.trackNumber)
+  def getTrackNumberString(track)
+    return sprintf('%02d', track.trackNumber)
+  end
+
+  def getMP3Filename(track)
+    trackNumberString = getTrackNumberString(track)
     mp3Filename = scenifyString("#{trackNumberString}-#{track.artist}-#{track.title}-#{@configuration::GroupInitials}.mp3", true)
+    return mp3Filename
+  end
+
+  def encodeMP3(track)
+    mp3Filename = getMP3Filename(track)
     outputPath = Nil.joinPaths(@outputDirectory, mp3Filename)
     replacementMap = {
       'input' => track.wavPath,
@@ -60,16 +68,30 @@ class AudioReleaser
     end
   end
 
+  def getZeroBasePath(extension)
+    fileName = "00-#{@baseReleaseString.downcase}.#{extension}"
+    return Nil.joinPaths(@outputDirectory, fileName)
+  end
+
   def processRelease(release)
     beginning = Time.now
     @release = release
-    baseReleaseString = scenifyString("#{release.artist}-#{release.title}-#{release.year}-#{@configuration::GroupInitials}")
-    @outputDirectory = Nil.joinPaths(@configuration::ReleaseDirectory, baseReleaseString)
+    @baseReleaseString = scenifyString("#{release.artist}-#{release.title}-#{release.year}-#{@configuration::GroupInitials}")
+    @outputDirectory = Nil.joinPaths(@configuration::ReleaseDirectory, @baseReleaseString)
     puts "Creating #{@outputDirectory}"
     FileUtils.mkdir_p(@outputDirectory)
+    copyCover
+    createJobs
+    createM3U
+    #createMP3s
+    duration = Time.now - beginning
+    printf("Duration: %.2f s\n", duration)
+  end
+
+  def createJobs
     @jobs = []
     trackNumber = 1
-    release.tracks.each do |track|
+    @release.tracks.each do |track|
       if !File.exists?(track.wavPath)
         raise "Unable to find WAV: #{track.wavPath}"
       end
@@ -78,6 +100,9 @@ class AudioReleaser
       @jobs << newTrack
       trackNumber += 1
     end
+  end
+
+  def createMP3s
     threads = []
     @configuration::WorkerCount.times do
       thread = Thread.new do
@@ -88,8 +113,19 @@ class AudioReleaser
     threads.each do |thread|
       thread.join
     end
-    duration = Time.now - beginning
-    printf("Duration: %.2f s\n", duration)
+  end
+
+  def copyCover
+    FileUtils.cp(@release.coverPath, getZeroBasePath('jpg'))
+  end
+
+  def createM3U
+    output = ";#{@baseReleaseString}\r\n"
+    @jobs.each do |track|
+      output += "#{getMP3Filename(track)}\r\n"
+    end
+    m3uPath = getZeroBasePath('m3u')
+    Nil.writeFile(m3uPath, output)
   end
 
   def getMP3Duration(path)
