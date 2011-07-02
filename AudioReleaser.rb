@@ -6,6 +6,7 @@ require 'nil/file'
 require 'nil/console'
 
 require 'audio-releaser/Configuration'
+require 'audio-releaser/NFOTemplate'
 
 class AudioReleaser
   def initialize(configuration = Configuration)
@@ -84,6 +85,7 @@ class AudioReleaser
     createJobs
     createM3U
     #createMP3s
+    createNFO
     duration = Time.now - beginning
     printf("Duration: %.2f s\n", duration)
   end
@@ -132,5 +134,29 @@ class AudioReleaser
     Mp3Info.open(path) do |mp3|
       return mp3.length.round
     end
+  end
+
+  def getDateString(date)
+    return sprintf('%d-%02d-%02d', date.year, date.month, date.day)
+  end
+
+  def createNFO
+    template = NFOTemplate.new(@configuration::NFOTemplatePath)
+    nfoOutputPath = getZeroBasePath('nfo')
+    trackString = ''
+    totalTimeString = ''
+    fields = {
+      'artist' => @release.artist,
+      'release' => @release.title,
+      'genre' => @release.genre,
+      'label' => @release.label,
+      'retail date' => getDateString(@release.retailDate),
+      'release date' => getDateString(@release.releaseDate),
+      'encoder' => @configuration::EncoderName,
+      'notes' => @release.notes,
+      'tracks' => trackString,
+      'total time' => totalTimeString,
+    }
+    template.writeNFO(nfoOutputPath, fields)
   end
 end
