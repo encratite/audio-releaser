@@ -10,7 +10,6 @@ class Release
     :label,
     :retailDate,
     :releaseDate,
-    :encoder,
     :notes,
     :tracks,
   ]
